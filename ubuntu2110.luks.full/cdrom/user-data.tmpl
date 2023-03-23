@@ -1,0 +1,120 @@
+#cloud-config
+autoinstall:
+  version: 1
+  early-commands:
+    - systemctl stop ssh #prevent packer to connect to this one
+  # interactive-sections:
+  #  - storage
+  locale: en_US
+  keyboard:
+    layout: fr
+    variant: fr
+  network:
+    network:
+      version: 2
+      ethernets:
+        ens192:
+          dhcp4: true
+          # dhcp4: false #true to use dhcp
+          # addresses:
+          #   - 192.168.1.89/24 #Set you ip here
+          # gateway4: 192.168.1.1 # Set gw here
+          # nameservers:
+          #   addresses:
+          #     - 192.168.1.1 # Set DNS ip address here
+  apt:
+      preserve_sources_list: false
+      primary:
+          - arches: [amd64]
+  # if you need to add custom ubuntu repository
+  #          uri: "http://192.168.1.211:8081/repository/ubuntu-2104/"
+  #         - arches: [default]
+  #           uri: "http://ports.ubuntu.com/ubuntu-ports"
+  #     geoip: false
+  #       disable_suites: [backports]
+  #       sources:
+  #         localrepokey:
+  #           key: | # full key as block (fake key just for documentation)
+  #             -----BEGIN PGP PUBLIC KEY BLOCK-----
+  #             Version: GnuPG v1
+
+  #             SDsdsdskdlsdlskexstGsKD7McXZgd58oN68KquARLBl6rjA2vdhwl77KkPPOr3O
+  #             RwIbDAAKCRBA+SDeDeedcsdcdfddscsdddffdcsyGQ2/mhqidES4MwCggqQyo+w1
+  #             Twx6DKLF+3rF5nf1F3Q=
+  #             =PBAe
+  #             -----END PGP PUBLIC KEY BLOCK-----
+  # custom storage based on ANSSI recommandation 
+  # https://www.ssi.gouv.fr/en/guide/configuration-recommendations-of-a-gnulinux-system/ 
+  # mount option not working on ubuntu have to be fix
+  storage:
+    grub:
+      reorder_uefi: False
+    swap:
+      size: 0
+    config:
+    - {type: disk, id: disk-sda, ptable: gpt, path: /dev/sda, preserve: false, name: '', wipe: superblock-recursive, grub_device: false}
+    - {type: partition, device: disk-sda, size: 768MB, number: 1, wipe: superblock, flag: '', preserve: false, grub_device: false, id: partition-boot}
+    - {type: partition, device: disk-sda, size: 2MB, flag: '', number: 2, preserve: false, id: partition-bios}
+    - {type: partition, device: disk-sda, size: 128MB, number: 3, wipe: superblock, flag: boot, preserve: false, grub_device: true, id: partition-efi}
+    - {type: partition, device: disk-sda, size: -1, number: 4, preserve: false, flag: linux, grub_device: false, id: partition-lvm}
+    - {type: dm_crypt, dm_name: LUKS_BOOT, volume: partition-boot, key: ${lukspass}, id: partition-crypt-boot}
+    - {type: dm_crypt, dm_name: sda4_crypt, volume: partition-lvm, key: ${lukspass}, keysize: '512', id: partition-crypt-lvm}
+    - {type: lvm_volgroup, devices: [partition-crypt-lvm], name: vg-ubuntu, preserve: false, id: lvm-volgroup-root }
+    - {type: lvm_partition, name: lv-root, size: 26GB, volgroup: lvm-volgroup-root, preserve: false, wipe: superblock, id: lvm_partition-root}
+    - {type: format, fstype: ext4, volume: partition-crypt-boot, preserve: false, label:'', id: format-boot}
+    - {type: format, fstype: fat32, volume: partition-efi, preserve: false, label:'', id: format-efi}
+    - {type: format, fstype: ext4, volume: lvm_partition-root, preserve: false, label:'', id: format-root}
+    - {type: mount, device: format-root, path: /, id: mount-root}
+    - {type: mount, device: format-boot, path: /boot, id: mount-boot}
+    - {type: mount, device: format-efi, path: /boot/efi, id: mount-efi}
+  identity:
+    hostname: u2110srv
+    username: osadmin #your username
+    password: "$6$tMnuc9F8ZQ$Bq2CrVuFSIw2vNwB8bloStW.CC2/utHuRXVwRWGk2YdA3mnWSMZ8UATXjDQ/jBGcUq38305mM6FEBkf1R3ika1"
+  packages:
+    - open-vm-tools
+    - screen
+    - vim
+    - iptables-persistent
+  refresh-installer:
+    update: yes
+  ssh:
+    install-server: true
+    allow-pw: yes
+  user-data:
+    disable_root: false
+  late-commands:
+    #- curtin in-target --target=/target exit 1
+    - curtin in-target --target=/target -- apt-get update -y
+    - curtin in-target --target=/target -- apt-get upgrade -y
+    - curtin in-target --target=/target -- apt-get remove -y multipath-tools
+    - umount /target/boot/efi
+    - umount /target/boot
+    - cryptsetup luksClose LUKS_BOOT
+    - echo "${lukspass}" | cryptsetup luksConvertKey --pbkdf pbkdf2 /dev/sda1
+    - cryptsetup -q convert --type luks1 /dev/sda1
+    - echo "${lukspass}" | cryptsetup open /dev/sda1 LUKS_BOOT
+    - mount /dev/mapper/LUKS_BOOT /target/boot
+    - mount /dev/sda3 /target/boot/efi
+    - for n in proc sys dev etc/resolv.conf; do mount --rbind /$n /target/$n; done
+    - sed -i "s/disk\/by-id.*-LUKS_BOOT/mapper\/LUKS_BOOT/" /target/etc/fstab
+    - echo "GRUB_ENABLE_CRYPTODISK=y" > /target/etc/default/grub.d/local.cfg
+    - echo GRUB_CRYPTODISK_ENABLE=y >> /target/etc/default/grub.d/local.cfg
+    - echo 'GRUB_PRELOAD_MODULES="luks cryptodisk"' >> /target/etc/default/grub.d/local.cfg
+    - echo "KEYFILE_PATTERN=/etc/luks/*.keyfile" >> /target/etc/cryptsetup-initramfs/conf-hook
+    - echo "UMASK=0077" >> /target/etc/initramfs-tools/initramfs.conf
+    - echo "CRYPTSETUP=y" >> /target/etc/cryptsetup-initramfs/conf-hook
+    - echo "export CRYPTSETUP=y" >> /target/usr/share/initramfs-tools/conf-hooks.d/forcecryptsetup
+    - mkdir /target/etc/luks
+    - dd if=/dev/urandom of=/target/etc/luks/boot_os.keyfile bs=512 count=1
+    - chmod u=rx,go-rwx /target/etc/luks
+    - chmod u=r,go-rwx /target/etc/luks/boot_os.keyfile
+    - echo "${lukspass}" | cryptsetup luksAddKey /dev/sda1 /target/etc/luks/boot_os.keyfile
+    - echo "${lukspass}" | cryptsetup luksAddKey /dev/sda4 /target/etc/luks/boot_os.keyfile
+    - echo "LUKS_BOOT UUID=$(blkid -s UUID -o value /dev/sda1) /etc/luks/boot_os.keyfile luks,discard,key-slot=0" > /target/etc/crypttab
+    - echo "sda4_crypt UUID=$(blkid -s UUID -o value /dev/sda4) /etc/luks/boot_os.keyfile luks,discard,key-slot=1" >> /target/etc/crypttab
+    - echo "CRYPTOPTS=target=sdc4_crypt,source=UUID=$(blkid -s UUID -o value /dev/sda4),lvm=vg-ubuntu" >> /target/etc/initramfs-tools/conf.d/cryptroot
+    - curtin in-target --target=/target -- update-initramfs -u -k all -v || true
+    - curtin in-target --target=/target -- update-grub2
+    - curtin in-target --target=/target -- grub-install /dev/sda3
+
