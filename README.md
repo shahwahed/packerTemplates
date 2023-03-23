@@ -3,6 +3,7 @@
 This repository contain my packer templates
 
 Availlable templates :
+* Debian 11.6 with cloud-init support
 * Ubuntu 20.04 using autoinstall
 * Ubuntu 20.10 using autoinstall
 * Ubuntu 21.04 using autoinstall
