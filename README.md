@@ -3,7 +3,7 @@
 This repository contain my packer templates
 
 Availlable templates :
-* Debian 11.6 with cloud-init support, pressed using cdrom2 ^^ (guest is set to other4xLinux64Guest, need vSphere 8.x for debian11_64Guest"
+* Debian 11.6 with cloud-init support, pressed using cdrom2 ^^ (guest is set to other4xLinux64Guest, need vSphere 8.x for debian11_64Guest)"
 * Ubuntu 20.04 using autoinstall
 * Ubuntu 20.10 using autoinstall
 * Ubuntu 21.04 using autoinstall
